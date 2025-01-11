@@ -19,7 +19,9 @@ const request = require('request');
 // using this our react will connect to the backend
 app.use(cors());
 
-mongoose.connect('mongodb+srv://vahanfinindia:ITyMcsljxjoVgWJ2@rcinfo.o6vdruh.mongodb.net/?retryWrites=true&w=majority&appName=rcinfo');
+mongoose.connect('mongodb://localhost:27017/easifybiz');
+
+// mongoose.connect('mongodb+srv://vahanfinindia:ITyMcsljxjoVgWJ2@rcinfo.o6vdruh.mongodb.net/?retryWrites=true&w=majority&appName=rcinfo');
 app.use(express.json());
 
 

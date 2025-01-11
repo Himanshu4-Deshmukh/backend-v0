@@ -7,14 +7,6 @@ const bcrypt = require('bcrypt');
 const cors = require("cors");
 const axios = require('axios');
 const xml2js = require('xml2js');
-const Razorpay = require('razorpay');
-const crypto = require('crypto');
-
-// Initialize Razorpay
-const razorpay = new Razorpay({
-  key_id: 'rzp_test_LetnicYdIN9c1h',
-  key_secret: 'D9rULk9SvjfSvqfvfvqn0A2C'
-});
 
 // Middleware
 app.use(cors());
@@ -28,7 +20,7 @@ mongoose.connect('mongodb://localhost:27017/easifybiz', {
 .then(() => console.log('MongoDB connected successfully'))
 .catch((error) => console.error('MongoDB connection error:', error));
 
-// Models
+// User Model
 const Users = mongoose.model('Users', {
   name: { type: String },
   email: { type: String, unique: true },
@@ -38,11 +30,12 @@ const Users = mongoose.model('Users', {
   companyname: { type: String },
   number: { type: String },
   credits: { type: Number, default: 100 },
-  vahanChalanTask: { type: Number, default: 0 },
-  chalanTask: { type: Number, default: 0 },
-  fastagTask: { type: Number, default: 0 },
+
+  vahanChalanTask: { type: Number, default: 0 },  // New field for Vahan Chalan task count
+  fastagTask: { type: Number, default: 0 },  // New field for Fastag task count
 });
 
+// RC Details Model
 const RcDetails = mongoose.model('RcDetails', {
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'Users' },
   vehicleNumber: { type: String, required: true },
@@ -69,16 +62,6 @@ const RcDetails = mongoose.model('RcDetails', {
   createdAt: { type: Date, default: Date.now },
 });
 
-const Payments = mongoose.model('Payments', {
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'Users' },
-  orderId: String,
-  paymentId: String,
-  amount: Number,
-  credits: Number,
-  status: String,
-  createdAt: { type: Date, default: Date.now }
-});
-
 // Middleware to verify JWT
 function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
@@ -95,7 +78,7 @@ function verifyToken(req, res, next) {
   });
 }
 
-// Auth Routes
+// Signup Route
 app.post('/signup', async (req, res) => {
   try {
     const existingUser = await Users.findOne({ email: req.body.email });
@@ -127,6 +110,7 @@ app.post('/signup', async (req, res) => {
   }
 });
 
+// Login Route
 app.post('/login', async (req, res) => {
   try {
     const user = await Users.findOne({ email: req.body.email });
@@ -147,127 +131,6 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Payment Routes
-app.post('/api/create-payment', verifyToken, async (req, res) => {
-  try {
-    const { credits, companyName, address, selectedState, number } = req.body;
-    
-    if (!credits || isNaN(credits) || credits <= 0) {
-      return res.status(400).json({ error: 'Invalid credit amount' });
-    }
-
-    const user = await Users.findById(req.userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // Calculate amount in paise (Razorpay expects amount in smallest currency unit)
-    const amount = Math.round(credits * 118); // Including 18% GST
-    
-    const options = {
-      amount: amount,
-      currency: 'INR',
-      receipt: `rcpt_${Date.now()}`,
-      notes: {
-        userId: req.userId,
-        credits: credits,
-        companyName,
-        address,
-        selectedState,
-        number
-      }
-    };
-
-    const order = await razorpay.orders.create(options);
-    
-    res.json({
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      key: 'rzp_test_LetnicYdIN9c1h'
-    });
-  } catch (error) {
-    console.error('Error creating Razorpay order:', error);
-    res.status(500).json({ error: 'Failed to create payment order' });
-  }
-});
-
-app.post('/api/verify-payment', verifyToken, async (req, res) => {
-  try {
-    const {
-      razorpay_payment_id,
-      razorpay_order_id,
-      razorpay_signature,
-      credits
-    } = req.body;
-
-    console.log('Verifying payment:', {
-      paymentId: razorpay_payment_id,
-      orderId: razorpay_order_id,
-      credits: credits
-    });
-
-    // Verify payment signature
-    const generated_signature = crypto
-      .createHmac('sha256', 'D9rULk9SvjfSvqfvfvqn0A2C')
-      .update(razorpay_order_id + '|' + razorpay_payment_id)
-      .digest('hex');
-
-    if (generated_signature !== razorpay_signature) {
-      console.log('Signature verification failed');
-      return res.status(400).json({ error: 'Invalid payment signature' });
-    }
-
-    // Verify payment status
-    const payment = await razorpay.payments.fetch(razorpay_payment_id);
-    console.log('Payment status:', payment.status);
-    
-    if (payment.status !== 'captured') {
-      return res.status(400).json({ error: 'Payment not captured' });
-    }
-
-    // Update user credits
-    const user = await Users.findById(req.userId);
-    if (!user) {
-      console.log('User not found:', req.userId);
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    console.log('Current credits:', user.credits);
-    console.log('Adding credits:', parseInt(credits));
-
-    // Create payment record
-    const paymentRecord = new Payments({
-      userId: req.userId,
-      orderId: razorpay_order_id,
-      paymentId: razorpay_payment_id,
-      amount: payment.amount / 100, // Convert from paise to rupees
-      credits: credits,
-      status: 'success'
-    });
-    await paymentRecord.save();
-
-    // Update user credits
-    const previousCredits = user.credits;
-    user.credits += parseInt(credits);
-    await user.save();
-
-    console.log('Updated credits:', user.credits);
-
-    res.json({
-      success: true,
-      message: 'Payment verified and credits updated successfully',
-      previousCredits,
-      newCredits: user.credits,
-      creditsAdded: parseInt(credits)
-    });
-  } catch (error) {
-    console.error('Error verifying payment and updating credits:', error);
-    res.status(500).json({ error: 'Failed to verify payment and update credits' });
-  }
-});
-// Other existing routes remain the same...
-
 // Get User Profile Route
 app.get('/profile', verifyToken, async (req, res) => {
   try {
@@ -280,7 +143,6 @@ app.get('/profile', verifyToken, async (req, res) => {
       email: user.email,
       credits: user.credits,
       vahanChalanTask: user.vahanChalanTask,
-      chalanTask: user.chalanTask,
       fastagTask: user.fastagTask
     });
   } catch (error) {
@@ -425,7 +287,6 @@ app.post('/api/rc-details', verifyToken, async (req, res) => {
   }
 });
 
-
 // Get User's RC Details History
 app.get('/api/rc-details-history', verifyToken, async (req, res) => {
     try {
@@ -461,45 +322,6 @@ app.get('/api/rc-details-history', verifyToken, async (req, res) => {
       }
     });
 
-    app.post('/api/echallan', verifyToken, async (req, res) => {
-        const { vehicleNumber } = req.body;
-      
-        if (!vehicleNumber) {
-          return res.status(400).json({ error: 'Vehicle number is required' });
-        }
-      
-        try {
-          // Check user credits
-          const user = await Users.findById(req.userId);
-          if (!user || user.credits <= 0) {
-            return res.status(403).json({ error: 'Insufficient credits' });
-          }
-      
-          // Fetch data from E-challan API
-          const response = await axios.post('http://3.110.172.78/echallan', { 
-            vehicleNumber 
-          });
-          console.log('Raw API response:', JSON.stringify(response.data, null, 2));
-          
-          if (!response.data) {
-            return res.status(404).json({ error: 'No data found' });
-          }
-      
-          // Deduct credits and update user stats
-          user.credits -= 5;
-          user.chalanTask += 1; // Increment Vahan Chalan task count
-          await user.save();
-      
-          res.json({
-            message: 'E-challan data retrieved successfully',
-            data: response.data
-          });
-      
-        } catch (error) {
-          console.error('Error fetching e-challan data:', error);
-          res.status(500).json({ error: 'Failed to fetch e-challan data' });
-        }
-      });
 
     app.get('/api/user-tasks', verifyToken, async (req, res) => {
         try {
@@ -512,7 +334,6 @@ app.get('/api/rc-details-history', verifyToken, async (req, res) => {
           res.json({
             Rcchallantask: user.Rcchallantask,
             vahanChalanTask: user.vahanChalanTask, // Ensure this is populated in your MongoDB schema
-            chalanTask: user.chalanTask, // Ensure this is populated in your MongoDB schema
           });
         } catch (error) {
           console.error('Error fetching user tasks:', error);
