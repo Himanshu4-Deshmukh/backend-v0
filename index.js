@@ -21,7 +21,7 @@ app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
-mongoose.connect('mongodb://localhost:27017/easifybiz', {
+mongoose.connect('mongodb+srv://studiofusionweb:yA393xeTzBxH35Ny@tenant.nqhqp.mongodb.net/easifybiz?retryWrites=true&w=majority', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
@@ -43,6 +43,7 @@ const Users = mongoose.model('Users', {
   fastagTask: { type: Number, default: 0 },
 });
 
+
 const RcDetails = mongoose.model('RcDetails', {
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'Users' },
   vehicleNumber: { type: String, required: true },
@@ -58,16 +59,18 @@ const RcDetails = mongoose.model('RcDetails', {
     engNo: String,
     financer: String,
     insuranceComp: String,
+    insurancePolicyNo: String, // Add this field
     blacklistStatus: String,
     ownerName: String,
     vhClassDesc: String,
     makerModel: String,
     fuelDesc: String,
     color: String,
-    presentAddress: String
+    presentAddress: String,
   },
   createdAt: { type: Date, default: Date.now },
 });
+
 
 const Payments = mongoose.model('Payments', {
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'Users' },
@@ -167,7 +170,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
     const options = {
       amount: amount,
       currency: 'INR',
-      receipt: `rcpt_${Date.now()}`,
+      receipt: rcpt_${Date.now()},
       notes: {
         userId: req.userId,
         credits: credits,
@@ -350,6 +353,7 @@ const parseVehicleData = async (responseData) => {
       engNo: details.rc_eng_no,
       financer: details.rc_financer,
       insuranceComp: details.rc_insurance_comp,
+      insurancePolicyNo: details.rc_insurance_policy_no,
       blacklistStatus: details.rc_blacklist_status,
       ownerName: details.rc_owner_name,
       vhClassDesc: details.rc_vh_class_desc,
@@ -461,6 +465,8 @@ app.get('/api/rc-details-history', verifyToken, async (req, res) => {
       }
     });
 
+// ## Challan APi WIth Logged in user Authentication ## // 
+
     app.post('/api/echallan', verifyToken, async (req, res) => {
         const { vehicleNumber } = req.body;
       
@@ -501,6 +507,51 @@ app.get('/api/rc-details-history', verifyToken, async (req, res) => {
         }
       });
 
+
+      // ## Fastag APi WIth Logged in user Authentication ## // 
+
+      app.post('/api/fastag', verifyToken, async (req, res) => {
+        const { tagId } = req.body;
+      
+        if (!tagId) {
+          return res.status(400).json({ error: 'Tag ID is required' });
+        }
+      
+        try {
+          // Check user credits
+          const user = await Users.findById(req.userId);
+          if (!user || user.credits <= 0) {
+            return res.status(403).json({ error: 'Insufficient credits' });
+          }
+    
+          // Fetch data from FastTag API
+          const response = await axios.post('http://3.110.172.78/fastag', {
+            tagId: tagId,
+          });
+          
+          console.log('Raw API response:', JSON.stringify(response.data, null, 2));
+          
+          if (!response.data) {
+            return res.status(404).json({ error: 'No data found' });
+          }
+    
+          // Deduct credits and update user stats
+          user.credits -= 5;
+          user.fastagTask = (user.fastagTask || 0) + 1; // Increment FastTag task count
+          await user.save();
+    
+          res.json({
+            message: 'FastTag data retrieved successfully',
+            data: response.data
+          });
+    
+        } catch (error) {
+          console.error('Error fetching FastTag data:', error.message);
+          res.status(500).json({ error: 'Failed to fetch FastTag data' });
+        }
+    });
+      
+
     app.get('/api/user-tasks', verifyToken, async (req, res) => {
         try {
           const user = await Users.findById(req.userId);
@@ -530,5 +581,5 @@ app.get('/api/rc-details-history', verifyToken, async (req, res) => {
 
 // Start Server
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log(Server is running on port ${port});
 });
